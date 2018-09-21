@@ -532,3 +532,113 @@ static const struct json_command dev_rescan_output_command = {
 	"For each output stored in the internal wallet ask `bitcoind` whether we are in sync with its state (spent vs. unspent)"
 };
 AUTODATA(json_command, &dev_rescan_output_command);
+
+static void json_dump_priv_key(struct command *cmd,
+		     const char *buffer, const jsmntok_t *params)
+{
+	struct json_result *response = new_json_result(cmd);
+	const *addrtok;
+	enum address_parse_result addr_parse;
+	struct ext_key ext;
+	struct pubkey pubkey;
+     /** The private key with prefix byte 0 */
+    unsigned char priv_key[33];
+    const u8 **scriptpubkey;
+
+	withdraw->cmd = cmd;
+	wtx_init(cmd, &withdraw->wtx);
+
+	if (!param(cmd, buffer, params,
+		   p_req("address", json_tok_tok, &addrtok),
+		   NULL))
+		return;
+
+	/* Parse address. */
+	addr_parse = json_tok_address_scriptpubkey(cmd,
+						   get_chainparams(cmd->ld),
+						   buffer, addrtok,
+                           scriptpubkey);
+
+	/* Check that destination address could be understood. */
+	if (addr_parse == ADDRESS_PARSE_UNRECOGNIZED) {
+		command_fail(cmd, LIGHTNINGD, "Could not parse destination address");
+		return;
+	}
+
+	/* Check address given is compatible with the chain we are on. */
+	if (addr_parse == ADDRESS_PARSE_WRONG_NETWORK) {
+		command_fail(cmd, LIGHTNINGD,
+			     "Destination address is not on network %s",
+			     get_chainparams(cmd->ld)->network_name);
+		return;
+	}
+
+    // TODO: use whatever mechanism dev_listaddrs uses to store and retrieve HD addresses
+    u64 last_idx = db_get_intvar(cmd->ld->wallet->db, "bip32_max_index", 0);
+
+	json_object_start(response, NULL);
+	json_array_start(response, "private_key");
+
+	for (s64 keyidx = 0; keyidx <= last_idx; keyidx++) {
+
+		if(keyidx == BIP32_INITIAL_HARDENED_CHILD){
+			break;
+		}
+
+		if (bip32_key_from_parent(cmd->ld->wallet->bip32_base, keyidx,
+					  BIP32_FLAG_KEY_PUBLIC, &ext) != WALLY_OK) {
+			command_fail(cmd, LIGHTNINGD,
+				     "Keys generation failure");
+			return;
+		}
+
+		if (!secp256k1_ec_pubkey_parse(secp256k1_ctx, &pubkey.pubkey,
+					       ext.pub_key, sizeof(ext.pub_key))) {
+			command_fail(cmd, LIGHTNINGD, "Key parsing failure");
+			return;
+		}
+
+	//	// p2sh
+	//	u8 *redeemscript_p2sh;
+	//	char *out_p2sh = encode_pubkey_to_addr(cmd, cmd->ld,
+	//					       &pubkey,
+	//					       true,
+	//					       &redeemscript_p2sh);
+
+	//	// bech32 : p2wpkh
+	//	u8 *redeemscript_p2wpkh;
+	//	char *out_p2wpkh = encode_pubkey_to_addr(cmd, cmd->ld,
+	//						 &pubkey,
+	//						 false,
+	//						 &redeemscript_p2wpkh);
+	//	if (!out_p2wpkh) {
+	//		command_fail(cmd, LIGHTNINGD,
+	//			     "p2wpkh address encoding failure.");
+	//		return;
+	//	}
+
+	//	// outputs
+	//	json_object_start(response, NULL);
+	//	json_add_u64(response, "keyidx", keyidx);
+	//	json_add_pubkey(response, "pubkey", &pubkey);
+	//	json_add_string(response, "p2sh", out_p2sh);
+	//	json_add_hex_talarr(response, "p2sh_redeemscript",
+	//			    redeemscript_p2sh);
+	//	json_add_string(response, "bech32", out_p2wpkh);
+	//	json_add_hex_talarr(response, "bech32_redeemscript",
+	//			    redeemscript_p2wpkh);
+	//	json_object_end(response);
+	}
+	json_array_end(response);
+	json_object_end(response);
+
+	command_success(cmd, response);
+}
+
+static const struct json_command dump_priv_key_command = {
+	"dumpprivkey",
+	json_dump_priv_key,
+    "Reveals the private key corresponding to {address}.
+};
+AUTODATA(json_command, &dump_priv_key_command);
+
