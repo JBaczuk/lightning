@@ -537,16 +537,11 @@ static void json_dump_priv_key(struct command *cmd,
 		     const char *buffer, const jsmntok_t *params)
 {
 	struct json_result *response = new_json_result(cmd);
-	const *addrtok;
+    const jsmntok_t *addrtok;
 	enum address_parse_result addr_parse;
 	struct ext_key ext;
 	struct pubkey pubkey;
-     /** The private key with prefix byte 0 */
-    unsigned char priv_key[33];
-    const u8 **scriptpubkey;
-
-	withdraw->cmd = cmd;
-	wtx_init(cmd, &withdraw->wtx);
+    const u8 *scriptpubkey;
 
 	if (!param(cmd, buffer, params,
 		   p_req("address", json_tok_tok, &addrtok),
@@ -557,11 +552,11 @@ static void json_dump_priv_key(struct command *cmd,
 	addr_parse = json_tok_address_scriptpubkey(cmd,
 						   get_chainparams(cmd->ld),
 						   buffer, addrtok,
-                           scriptpubkey);
+                           &scriptpubkey);
 
 	/* Check that destination address could be understood. */
 	if (addr_parse == ADDRESS_PARSE_UNRECOGNIZED) {
-		command_fail(cmd, LIGHTNINGD, "Could not parse destination address");
+		command_fail(cmd, LIGHTNINGD, "Could not parse address");
 		return;
 	}
 
@@ -573,11 +568,9 @@ static void json_dump_priv_key(struct command *cmd,
 		return;
 	}
 
-    // TODO: use whatever mechanism dev_listaddrs uses to store and retrieve HD addresses
     u64 last_idx = db_get_intvar(cmd->ld->wallet->db, "bip32_max_index", 0);
 
 	json_object_start(response, NULL);
-	json_array_start(response, "private_key");
 
 	for (s64 keyidx = 0; keyidx <= last_idx; keyidx++) {
 
@@ -598,38 +591,48 @@ static void json_dump_priv_key(struct command *cmd,
 			return;
 		}
 
-	//	// p2sh
-	//	u8 *redeemscript_p2sh;
-	//	char *out_p2sh = encode_pubkey_to_addr(cmd, cmd->ld,
-	//					       &pubkey,
-	//					       true,
-	//					       &redeemscript_p2sh);
+        // TODO: detect address type
+        
+        // TODO: generate addresses for each key up to latest
+        // TODO: if match, grab the private key
+        
+	    json_add_hex(response, "private_key", &ext.priv_key, 33);
+        json_add_hex(response, "public_key", &ext.pub_key, 33);
+        
+        // TODO: encode the private key to WIF format
+        // TODO: form json including address, HD index, and WIF
 
-	//	// bech32 : p2wpkh
-	//	u8 *redeemscript_p2wpkh;
-	//	char *out_p2wpkh = encode_pubkey_to_addr(cmd, cmd->ld,
-	//						 &pubkey,
-	//						 false,
-	//						 &redeemscript_p2wpkh);
-	//	if (!out_p2wpkh) {
-	//		command_fail(cmd, LIGHTNINGD,
-	//			     "p2wpkh address encoding failure.");
-	//		return;
-	//	}
+	    //	// p2sh
+	    //	u8 *redeemscript_p2sh;
+	    //	char *out_p2sh = encode_pubkey_to_addr(cmd, cmd->ld,
+	    //					       &pubkey,
+	    //					       true,
+	    //					       &redeemscript_p2sh);
 
-	//	// outputs
-	//	json_object_start(response, NULL);
-	//	json_add_u64(response, "keyidx", keyidx);
-	//	json_add_pubkey(response, "pubkey", &pubkey);
-	//	json_add_string(response, "p2sh", out_p2sh);
-	//	json_add_hex_talarr(response, "p2sh_redeemscript",
-	//			    redeemscript_p2sh);
-	//	json_add_string(response, "bech32", out_p2wpkh);
-	//	json_add_hex_talarr(response, "bech32_redeemscript",
-	//			    redeemscript_p2wpkh);
-	//	json_object_end(response);
+	    //	// bech32 : p2wpkh
+	    //	u8 *redeemscript_p2wpkh;
+	    //	char *out_p2wpkh = encode_pubkey_to_addr(cmd, cmd->ld,
+	    //						 &pubkey,
+	    //						 false,
+	    //						 &redeemscript_p2wpkh);
+	    //	if (!out_p2wpkh) {
+	    //		command_fail(cmd, LIGHTNINGD,
+	    //			     "p2wpkh address encoding failure.");
+	    //		return;
+	    //	}
+
+	    //	// outputs
+	    //	json_object_start(response, NULL);
+	    //	json_add_u64(response, "keyidx", keyidx);
+	    //	json_add_pubkey(response, "pubkey", &pubkey);
+	    //	json_add_string(response, "p2sh", out_p2sh);
+	    //	json_add_hex_talarr(response, "p2sh_redeemscript",
+	    //			    redeemscript_p2sh);
+	    //	json_add_string(response, "bech32", out_p2wpkh);
+	    //	json_add_hex_talarr(response, "bech32_redeemscript",
+	    //			    redeemscript_p2wpkh);
+	    //	json_object_end(response);
 	}
-	json_array_end(response);
 	json_object_end(response);
 
 	command_success(cmd, response);
@@ -638,7 +641,8 @@ static void json_dump_priv_key(struct command *cmd,
 static const struct json_command dump_priv_key_command = {
 	"dumpprivkey",
 	json_dump_priv_key,
-    "Reveals the private key corresponding to {address}.
+    "Get the private key for an address in your wallet", false,
+    "Reveals the private key corresponding to {address}."
 };
 AUTODATA(json_command, &dump_priv_key_command);
 
