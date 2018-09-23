@@ -78,6 +78,7 @@ static void sign_funding_tx(struct daemon_conn *master, const u8 *msg);
 static void sign_invoice(struct daemon_conn *master, const u8 *msg);
 static void sign_node_announcement(struct daemon_conn *master, const u8 *msg);
 static void sign_withdrawal_tx(struct daemon_conn *master, const u8 *msg);
+static void dump_priv_key(struct daemon_conn *master, const u8 *msg);
 
 static void node_key(struct privkey *node_privkey, struct pubkey *node_id)
 {
@@ -867,6 +868,7 @@ static bool check_client_capabilities(struct client *client,
 	case WIRE_HSM_SIGN_FUNDING:
 	case WIRE_HSM_SIGN_WITHDRAWAL:
 	case WIRE_HSM_SIGN_INVOICE:
+	case WIRE_HSM_DUMP_PRIV_KEY:
 	case WIRE_HSM_SIGN_COMMITMENT_TX:
 	case WIRE_HSM_GET_CHANNEL_BASEPOINTS:
 		return (client->capabilities & HSM_CAP_MASTER) != 0;
@@ -880,6 +882,7 @@ static bool check_client_capabilities(struct client *client,
 	case WIRE_HSM_NODE_ANNOUNCEMENT_SIG_REPLY:
 	case WIRE_HSM_SIGN_WITHDRAWAL_REPLY:
 	case WIRE_HSM_SIGN_INVOICE_REPLY:
+	case WIRE_HSM_DUMP_PRIV_KEY_REPLY:
 	case WIRE_HSM_INIT_REPLY:
 	case WIRE_HSMSTATUS_CLIENT_BAD_REQUEST:
 	case WIRE_HSM_SIGN_COMMITMENT_TX_REPLY:
@@ -944,6 +947,10 @@ static struct io_plan *handle_client(struct io_conn *conn,
 		sign_invoice(dc, dc->msg_in);
 		return daemon_conn_read_next(conn, dc);
 
+	case WIRE_HSM_DUMP_PRIV_KEY:
+		dump_priv_key(dc, dc->msg_in);
+		return daemon_conn_read_next(conn, dc);
+        
 	case WIRE_HSM_SIGN_WITHDRAWAL:
 		sign_withdrawal_tx(dc, dc->msg_in);
 		return daemon_conn_read_next(conn, dc);
@@ -986,6 +993,7 @@ static struct io_plan *handle_client(struct io_conn *conn,
 	case WIRE_HSM_NODE_ANNOUNCEMENT_SIG_REPLY:
 	case WIRE_HSM_SIGN_WITHDRAWAL_REPLY:
 	case WIRE_HSM_SIGN_INVOICE_REPLY:
+	case WIRE_HSM_DUMP_PRIV_KEY_REPLY:
 	case WIRE_HSM_INIT_REPLY:
 	case WIRE_HSMSTATUS_CLIENT_BAD_REQUEST:
 	case WIRE_HSM_SIGN_COMMITMENT_TX_REPLY:
@@ -1377,6 +1385,49 @@ static void sign_withdrawal_tx(struct daemon_conn *master, const u8 *msg)
 
 	daemon_conn_send(master,
 			 take(towire_hsm_sign_withdrawal_reply(NULL, tx)));
+}
+
+/**
+ * dump_priv_key- Dump a child private key from our wallet
+ */
+static void dump_priv_key(struct daemon_conn *master, const u8 *msg)
+{
+    struct ext_key key;
+    u32 key_index;
+
+    fprintf(stdout, "Inside dump_priv_key\n");
+
+	if (!fromwire_hsm_dump_priv_key(msg, &key_index)) {
+        status_broken("Failed to parse dump_priv_key: %s", 
+			tal_hex(tmpctx, msg));
+        fprintf(stdout, "Failed to parse dump_priv_key: %i\n", key_index);
+        return;
+    }
+
+    // TODO: derive child priv key using index in msg
+    if (bip32_key_from_parent(&secretstuff.bip32, key_index,
+                BIP32_FLAG_KEY_PRIVATE, &key) != WALLY_OK)
+    {
+        status_broken("Failed to derive key: %s",
+                    tal_hex(tmpctx, msg));
+        return;
+    }
+
+    for(int i=0; i < 33; i++)
+    {
+        fprintf(stdout, "%02x", key.priv_key[i]);
+    }
+    fprintf(stdout, "\n");
+
+    for(int i=0; i < 33; i++)
+    {
+        fprintf(stdout, "%02x", key.pub_key[i]);
+    }
+    fprintf(stdout, "\n");
+    
+    fprintf(stdout, "about to send back to main process\n");
+	daemon_conn_send(master,
+			 take(towire_hsm_dump_priv_key_reply(NULL, &key)));
 }
 
 /**

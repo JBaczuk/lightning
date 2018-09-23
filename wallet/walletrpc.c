@@ -537,11 +537,12 @@ static void json_dump_priv_key(struct command *cmd,
 		     const char *buffer, const jsmntok_t *params)
 {
 	struct json_result *response = new_json_result(cmd);
-    const jsmntok_t *addrtok;
+	const jsmntok_t *addrtok;
 	enum address_parse_result addr_parse;
 	struct ext_key ext;
 	struct pubkey pubkey;
     const u8 *scriptpubkey;
+    struct ext_key key;
 
 	if (!param(cmd, buffer, params,
 		   p_req("address", json_tok_tok, &addrtok),
@@ -556,7 +557,7 @@ static void json_dump_priv_key(struct command *cmd,
 
 	/* Check that destination address could be understood. */
 	if (addr_parse == ADDRESS_PARSE_UNRECOGNIZED) {
-		command_fail(cmd, LIGHTNINGD, "Could not parse address");
+		command_fail(cmd, LIGHTNINGD, "Could not parse destination address");
 		return;
 	}
 
@@ -568,6 +569,7 @@ static void json_dump_priv_key(struct command *cmd,
 		return;
 	}
 
+    // TODO: use whatever mechanism dev_listaddrs uses to store and retrieve HD addresses
     u64 last_idx = db_get_intvar(cmd->ld->wallet->db, "bip32_max_index", 0);
 
 	json_object_start(response, NULL);
@@ -591,58 +593,77 @@ static void json_dump_priv_key(struct command *cmd,
 			return;
 		}
 
-        // TODO: detect address type
-        
-        // TODO: generate addresses for each key up to latest
-        // TODO: if match, grab the private key
-        
-	    json_add_hex(response, "private_key", &ext.priv_key, 33);
-        json_add_hex(response, "public_key", &ext.pub_key, 33);
-        
-        // TODO: encode the private key to WIF format
-        // TODO: form json including address, HD index, and WIF
 
-	    //	// p2sh
-	    //	u8 *redeemscript_p2sh;
-	    //	char *out_p2sh = encode_pubkey_to_addr(cmd, cmd->ld,
-	    //					       &pubkey,
-	    //					       true,
-	    //					       &redeemscript_p2sh);
+	//	// p2sh
+	//	u8 *redeemscript_p2sh;
+	//	char *out_p2sh = encode_pubkey_to_addr(cmd, cmd->ld,
+	//					       &pubkey,
+	//					       true,
+	//					       &redeemscript_p2sh);
 
-	    //	// bech32 : p2wpkh
-	    //	u8 *redeemscript_p2wpkh;
-	    //	char *out_p2wpkh = encode_pubkey_to_addr(cmd, cmd->ld,
-	    //						 &pubkey,
-	    //						 false,
-	    //						 &redeemscript_p2wpkh);
-	    //	if (!out_p2wpkh) {
-	    //		command_fail(cmd, LIGHTNINGD,
-	    //			     "p2wpkh address encoding failure.");
-	    //		return;
-	    //	}
+	//	// bech32 : p2wpkh
+	//	u8 *redeemscript_p2wpkh;
+	//	char *out_p2wpkh = encode_pubkey_to_addr(cmd, cmd->ld,
+	//						 &pubkey,
+	//						 false,
+	//						 &redeemscript_p2wpkh);
+	//	if (!out_p2wpkh) {
+	//		command_fail(cmd, LIGHTNINGD,
+	//			     "p2wpkh address encoding failure.");
+	//		return;
+	//	}
 
-	    //	// outputs
-	    //	json_object_start(response, NULL);
-	    //	json_add_u64(response, "keyidx", keyidx);
-	    //	json_add_pubkey(response, "pubkey", &pubkey);
-	    //	json_add_string(response, "p2sh", out_p2sh);
-	    //	json_add_hex_talarr(response, "p2sh_redeemscript",
-	    //			    redeemscript_p2sh);
-	    //	json_add_string(response, "bech32", out_p2wpkh);
-	    //	json_add_hex_talarr(response, "bech32_redeemscript",
-	    //			    redeemscript_p2wpkh);
-	    //	json_object_end(response);
+	//	// outputs
+	//	json_object_start(response, NULL);
+	//	json_add_u64(response, "keyidx", keyidx);
+	//	json_add_pubkey(response, "pubkey", &pubkey);
+	//	json_add_string(response, "p2sh", out_p2sh);
+	//	json_add_hex_talarr(response, "p2sh_redeemscript",
+	//			    redeemscript_p2sh);
+	//	json_add_string(response, "bech32", out_p2wpkh);
+	//	json_add_hex_talarr(response, "bech32_redeemscript",
+	//			    redeemscript_p2wpkh);
+	//	json_object_end(response);
 	}
+
+    fprintf(stdout, "About to try the msg\n");
+
+	u8 *msg = towire_hsm_dump_priv_key(cmd, 0);
+	if (!wire_sync_write(cmd->ld->hsm_fd, take(msg)))
+        fatal("Could not write dump_priv_key to HSM: %s",
+              strerror(errno));
+    
+    fprintf(stdout, "the msg finished\n");
+
+    msg = wire_sync_read(cmd, cmd->ld->hsm_fd);
+
+    fprintf(stdout, "read finished\n");
+
+    if (!fromwire_hsm_dump_priv_key_reply(msg, &key))
+        fatal("HSM gave bad dump_priv_key_reply %s",
+              tal_hex(&key, msg));
+	
+    json_add_hex(response, "chain_code", key.chain_code, 32);
+    json_add_hex(response, "parent160", key.parent160, 20);
+    json_add_num(response, "depth", key.depth);
+    json_add_hex(response, "pad1", key.pad1, 10);
+    json_add_num(response, "child_num", key.child_num);
+    json_add_num(response, "version", key.version);
+    // FIXME: This gets cleared for some reason!
+    json_add_hex(response, "private_key", key.priv_key, 33);
+    json_add_hex(response, "public_key", key.pub_key, 33);
 	json_object_end(response);
 
+    // TODO: WIF
+    // https://github.com/ElementsProject/lightning/issues/1762
 	command_success(cmd, response);
 }
 
 static const struct json_command dump_priv_key_command = {
 	"dumpprivkey",
 	json_dump_priv_key,
-    "Get the private key for an address in your wallet", false,
-    "Reveals the private key corresponding to {address}."
+    "Reveals the private key corresponding to {address}.", false,
+    "Dump the private key corresponding to a child address in your wallet."
 };
 AUTODATA(json_command, &dump_priv_key_command);
 

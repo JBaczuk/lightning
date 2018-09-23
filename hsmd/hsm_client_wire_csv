@@ -78,6 +78,13 @@ hsm_sign_invoice,,hrp,hrplen*u8
 hsm_sign_invoice_reply,108
 hsm_sign_invoice_reply,,sig,secp256k1_ecdsa_recoverable_signature
 
+# Dump a private key
+hsm_dump_priv_key,23
+hsm_dump_priv_key,,keyindex,u32
+
+hsm_dump_priv_key_reply,123
+hsm_dump_priv_key_reply,,ext_key,struct ext_key
+
 # Give me ECDH(node-id-secret,point)
 hsm_ecdh_req,1
 hsm_ecdh_req,,point,struct pubkey
