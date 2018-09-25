@@ -24,6 +24,7 @@
 #include <lightningd/subd.h>
 #include <wally_bip32.h>
 #include <wire/wire_sync.h>
+#include <libbase58.h>
 
 struct withdrawal {
 	struct command *cmd;
@@ -574,7 +575,8 @@ static void json_dump_priv_key(struct command *cmd,
 
 	json_object_start(response, NULL);
 
-	for (s64 keyidx = 0; keyidx <= last_idx; keyidx++) {
+    s64 keyidx;
+	for (keyidx = 0; keyidx <= last_idx; keyidx++) {
 
 		if(keyidx == BIP32_INITIAL_HARDENED_CHILD){
 			break;
@@ -594,12 +596,22 @@ static void json_dump_priv_key(struct command *cmd,
 		}
 
 
-	//	// p2sh
-	//	u8 *redeemscript_p2sh;
-	//	char *out_p2sh = encode_pubkey_to_addr(cmd, cmd->ld,
-	//					       &pubkey,
-	//					       true,
-	//					       &redeemscript_p2sh);
+		// p2sh
+		u8 *redeemscript_p2sh;
+		char *out_p2sh = encode_pubkey_to_addr(cmd, cmd->ld,
+						       &pubkey,
+						       true,
+						       &redeemscript_p2sh);
+        
+        fprintf(stdout, "out_p2sh: %s\n", out_p2sh);
+        fprintf(stdout, "params length: %i", params->end - params->start);
+        fprintf(stdout, "address param: %s\n", buffer + params->start, params->end - params->start);
+
+        if (memcmp(out_p2sh, address, sizeof(&address)) == 0)
+        {
+            fprintf(stdout, "FOUND A MATCH!\n");
+            break;
+        }
 
 	//	// bech32 : p2wpkh
 	//	u8 *redeemscript_p2wpkh;
@@ -628,7 +640,7 @@ static void json_dump_priv_key(struct command *cmd,
 
     fprintf(stdout, "About to try the msg\n");
 
-	u8 *msg = towire_hsm_dump_priv_key(cmd, 0);
+	u8 *msg = towire_hsm_dump_priv_key(cmd, keyidx);
 	if (!wire_sync_write(cmd->ld->hsm_fd, take(msg)))
         fatal("Could not write dump_priv_key to HSM: %s",
               strerror(errno));
@@ -642,6 +654,15 @@ static void json_dump_priv_key(struct command *cmd,
     if (!fromwire_hsm_dump_priv_key_reply(msg, &key))
         fatal("HSM gave bad dump_priv_key_reply %s",
               tal_hex(&key, msg));
+
+    static u8 buf[BIP32_SERIALIZED_LEN];
+    int ret = bip32_key_serialize(&key, BIP32_FLAG_KEY_PRIVATE,
+                                    buf, BIP32_SERIALIZED_LEN);
+    assert(ret == WALLY_OK);
+    static char enc[1024];
+    size_t outlen = sizeof(enc);
+    b58check_enc(enc, &outlen, 4, buf+1, BIP32_SERIALIZED_LEN-1);
+    printf("%.*s\n", (int)outlen, enc);
 	
     json_add_hex(response, "chain_code", key.chain_code, 32);
     json_add_hex(response, "parent160", key.parent160, 20);
@@ -649,8 +670,8 @@ static void json_dump_priv_key(struct command *cmd,
     json_add_hex(response, "pad1", key.pad1, 10);
     json_add_num(response, "child_num", key.child_num);
     json_add_num(response, "version", key.version);
-    // FIXME: This gets cleared for some reason!
     json_add_hex(response, "private_key", key.priv_key, 33);
+    json_add_string(response, "bip32_priv", enc);
     json_add_hex(response, "public_key", key.pub_key, 33);
 	json_object_end(response);
 
